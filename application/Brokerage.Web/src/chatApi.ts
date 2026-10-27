@@ -47,6 +47,26 @@ export type ChatFlow = {
   isReadOnly: boolean;
   description: string;
   parameters: string;
+  fields: WorkflowParameter[];
+};
+
+export type WorkflowParameter = {
+  name: string;
+  type: "text" | "email" | "uuid" | "number" | "integer" | "boolean" | "date" | "datetime" | "json" | "json-string" | "select";
+  required: boolean;
+  options: string[];
+};
+
+function isWorkflowParameterType(value: string): value is WorkflowParameter["type"] {
+  return [
+    "text", "email", "uuid", "number", "integer", "boolean", "date", "datetime",
+    "json", "json-string", "select",
+  ].some((type) => type === value);
+}
+
+export type JsonRpcResult = {
+  method: string;
+  result: unknown;
 };
 
 const identityStorageKeys = {
@@ -67,9 +87,12 @@ const identityEndpoint = chatEndpoint.endsWith("/api/chat")
 const chatSettingsEndpoint = chatEndpoint.endsWith("/api/chat")
   ? `${chatEndpoint.slice(0, -"/api/chat".length)}/api/admin/settings/chat`
   : "/api/admin/settings/chat";
-const chatFlowsEndpoint = chatEndpoint.endsWith("/api/chat")
-  ? `${chatEndpoint.slice(0, -"/api/chat".length)}/api/chat/flows`
-  : "/api/chat/flows";
+const brokerageFlowsEndpoint = chatEndpoint.endsWith("/api/chat")
+  ? `${chatEndpoint.slice(0, -"/api/chat".length)}/api/rpc/flows`
+  : "/api/rpc/flows";
+const jsonRpcEndpoint = chatEndpoint.endsWith("/api/chat")
+  ? `${chatEndpoint.slice(0, -"/api/chat".length)}/rpc`
+  : "/rpc";
 
 export function subscribeIdentitySession(
   listener: (session: IdentityAuthenticationResponse | null) => void,
@@ -372,32 +395,80 @@ export async function saveChatProviderSettings(
   return parseChatProviderSettings(await response.json());
 }
 
-export async function getChatFlows(): Promise<ChatFlow[]> {
-  const response = await authenticatedFetch(chatFlowsEndpoint, {
+export async function getBrokerageFlows(): Promise<ChatFlow[]> {
+  const response = await authenticatedFetch(brokerageFlowsEndpoint, {
     headers: { Accept: "application/json" },
   });
   if (!response.ok) {
-    if (response.status === 401) throw new Error("Sign in to view available chat flows.");
-    throw new Error(`The chat flow catalog returned HTTP ${response.status}.`);
+    if (response.status === 401) throw new Error("Sign in to view available workflows.");
+    throw new Error(`The workflow catalog returned HTTP ${response.status}.`);
   }
 
   const payload: unknown = await response.json();
-  if (!Array.isArray(payload)) throw new Error("The chat flow catalog returned an invalid response.");
+  if (!Array.isArray(payload)) throw new Error("The workflow catalog returned an invalid response.");
   return payload.map((flow): ChatFlow => {
     if (!isRecord(flow) ||
         typeof flow.method !== "string" ||
         typeof flow.isReadOnly !== "boolean" ||
         typeof flow.description !== "string" ||
-        typeof flow.parameters !== "string") {
-      throw new Error("The chat flow catalog returned an invalid flow.");
+        typeof flow.parameters !== "string" ||
+        !Array.isArray(flow.fields)) {
+      throw new Error("The workflow catalog returned an invalid entry.");
     }
+    const fields = flow.fields.map((field): WorkflowParameter => {
+      if (!isRecord(field) ||
+          typeof field.name !== "string" ||
+          typeof field.type !== "string" ||
+          !isWorkflowParameterType(field.type) ||
+          typeof field.required !== "boolean" ||
+          !Array.isArray(field.options) ||
+          !field.options.every((option) => typeof option === "string")) {
+        throw new Error(`The workflow catalog returned invalid field metadata for ${flow.method}.`);
+      }
+      return {
+        name: field.name,
+        type: field.type,
+        required: field.required,
+        options: field.options,
+      };
+    });
     return {
       method: flow.method,
       isReadOnly: flow.isReadOnly,
       description: flow.description,
       parameters: flow.parameters,
+      fields,
     };
   });
+}
+
+export async function callBrokerageFlow(
+  method: string,
+  parameters: Record<string, unknown>,
+): Promise<JsonRpcResult> {
+  const response = await authenticatedFetch(jsonRpcEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: crypto.randomUUID(),
+      method,
+      params: parameters,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`The brokerage service returned HTTP ${response.status}.`);
+  }
+
+  const payload: unknown = await response.json();
+  if (!isRecord(payload)) throw new Error("The brokerage service returned an invalid JSON-RPC response.");
+  if (isRecord(payload.error) && typeof payload.error.message === "string") {
+    throw new Error(payload.error.message);
+  }
+  if (!("result" in payload)) {
+    throw new Error("The brokerage service response did not include a result.");
+  }
+  return { method, result: payload.result };
 }
 
 export async function sendChatMessage(

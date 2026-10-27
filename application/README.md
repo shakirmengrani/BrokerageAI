@@ -43,7 +43,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. Vite proxies `/api` requests to the Host on port 8080. The Host also serves the production-built SPA directly; its API endpoints include `/api/chat`, `/rpc`, `/mcp`, and `/health`.
+Open `http://127.0.0.1:5173` for the Dashboard or `http://127.0.0.1:5173/chat` for the Chat UI. Vite proxies `/api` and `/rpc` requests to the Host on port 8080. The Host also serves the production-built SPA directly; its API endpoints include `/api/chat`, `/api/rpc/flows`, `/rpc`, `/mcp`, and `/health`.
 
 ## Production build and run
 
@@ -62,13 +62,13 @@ Then, from the repository root, start the published Host:
 ```bash
 ConnectionStrings__DefaultConnection='Host=<db-host>;Port=5432;Database=brokerage;Username=<db-user>;Password=<db-password>' \
 Identity__JwtSigningKey='<random-secret-of-at-least-32-bytes>' \
-Chat__Endpoint='https://api.openai.com/v1/chat/completions' \
-Chat__Model='<provider-model>' \
-Chat__ApiKey='<provider-api-key>' \
+Chat__SettingsEncryptionKey='<base64-encoded-random-32-byte-key>' \
 ASPNETCORE_ENVIRONMENT=Production \
 ASPNETCORE_URLS=http://0.0.0.0:8080 \
 dotnet ./artifacts/publish/Brokerage.Host.dll
 ```
+
+Chat provider settings are optional for the Dashboard and module workflows. To enable the Chat UI's AI assistant, configure `Chat__Endpoint`, `Chat__Model`, and, when required by the provider, `Chat__ApiKey` using the deployment secret manager or the administrator-only Settings page.
 
 Terminate TLS at a trusted reverse proxy or configure HTTPS directly for the Host. Configure and verify production authentication and authorization before exposing the chat, RPC, or MCP endpoints.
 
@@ -161,7 +161,7 @@ Authenticate MCP requests with a bearer access token from the Identity endpoints
 
 The authenticated `POST /api/chat` endpoint accepts a message and up to 20 prior user/assistant messages. The Host uses a configured OpenAI-compatible Chat Completions endpoint and exposes the registered JSON-RPC workflows from all 20 modules as chat tools: Accounts, Admin, Billing, Clients, Corporate Actions, Documents, Identity, Integrations, Market Data, Notifications, Orders, Payments, Portfolios, Reconciliation, Reference Data, Reporting, Risk, Settlement, Tax, and Workflow. Examples include account and client lookups, balance and risk checks, stored quotes, workflow and reconciliation operations, orders, payments, reporting, and reference data. The existing JSON-RPC method handlers remain the source of module behavior and authorization; chat invokes them with the authenticated caller's principal.
 
-Authenticated clients can retrieve the same flow catalog shown in the Web UI's right sidebar from `GET /api/chat/flows`. Each entry includes its method, description, parameters, and whether it is read-only or requires explicit confirmation.
+Authenticated Dashboard and Chat clients can retrieve registered workflow metadata from `GET /api/rpc/flows`; the existing `GET /api/chat/flows` remains available for compatibility. Each entry includes its method, description, parameter summary, read/write mode, and structured field definitions (type, requiredness, and select options) used to generate workflow forms.
 
 Read-only workflows run immediately, subject to the same role and account/client checks as JSON-RPC. State-changing workflows never run just because the model requested them: chat returns a user-bound draft with its method and arguments. The UI's **Confirm and execute** button calls `POST /api/chat/actions/{id}/confirm` with an antiforgery token; **Discard** calls `DELETE /api/chat/actions/{id}`. Confirmation rechecks method role/record permissions and consumes the draft once. The response is `{ "reply": "...", "pendingActions": [...] }`.
 
@@ -177,4 +177,6 @@ Saved provider settings override environment configuration and take effect on th
 
 ## Web UI
 
-`Brokerage.Web` is a separate React + TypeScript frontend with a responsive, terminal-inspired chat layout. It requires Node.js 20.19+ or 22.12+. The development and production commands are listed above. In production, Vite writes the built assets to `Brokerage.Host/wwwroot`; the Host serves the SPA and falls back to `index.html` for client-side routes. The browser calls the Host's authenticated `POST /api/chat` endpoint; it does not connect directly to MCP.
+`Brokerage.Web` is a single React + TypeScript frontend. The default `/` route is the module Dashboard; `/chat` opens the responsive, terminal-inspired Chat UI. Both routes share the same Identity session. It requires Node.js 20.19+ or 22.12+. The development and production commands are listed above. In production, Vite writes the built assets to `Brokerage.Host/wwwroot`; the Host serves the SPA and falls back to `index.html` for both client-side routes.
+
+The Dashboard loads registered workflow metadata from the authenticated `GET /api/rpc/flows` endpoint and invokes module workflows through authenticated JSON-RPC `POST /rpc`, without requiring any Chat provider configuration. The Dashboard and the Chat flow catalog use the same generated, typed forms; nested JSON inputs are validated before submission. Read-only operations can be run directly. State-changing operations require a separate confirmation step; the Host continues to enforce authentication and module authorization. See [Flows.http](./Brokerage.Host/Flows.http) for request examples.

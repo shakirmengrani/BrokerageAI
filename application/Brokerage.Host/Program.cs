@@ -207,6 +207,7 @@ app.MapHealthChecks("/health");
 app.MapIdentityEndpoints();
 app.MapBrokerageMcp("/mcp");
 app.MapChatEndpoints();
+app.MapFlowEndpoints();
 app.MapChatSettingsEndpoints();
 if (app.Environment.IsDevelopment())
     app.MapOpenApi();

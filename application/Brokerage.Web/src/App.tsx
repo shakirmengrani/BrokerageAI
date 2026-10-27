@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import {
   cancelChatAction,
+  callBrokerageFlow,
   confirmChatAction,
-  getChatFlows,
+  getBrokerageFlows,
   getChatProviderSettings,
   loginIdentity,
   logoutIdentity,
@@ -15,6 +17,7 @@ import {
   type ChatFlow,
   type ChatPendingAction,
   type IdentityAuthenticationResponse,
+  type WorkflowParameter,
 } from "./chatApi";
 
 type ActionState = ChatPendingAction & {
@@ -47,6 +50,7 @@ function ChatFlowsSidebar({
   error: string;
 }) {
   const [filter, setFilter] = useState("");
+  const [selectedFlow, setSelectedFlow] = useState<ChatFlow | null>(null);
   const normalizedFilter = filter.trim().toLowerCase();
   const filteredFlows = flows.filter((flow) =>
     `${flow.method} ${flow.description} ${flow.parameters}`.toLowerCase().includes(normalizedFilter));
@@ -57,6 +61,10 @@ function ChatFlowsSidebar({
     groups.set(category, categoryFlows);
     return groups;
   }, new Map());
+
+  useEffect(() => {
+    if (!isOpen) setSelectedFlow(null);
+  }, [isOpen]);
 
   return (
     <aside
@@ -113,6 +121,13 @@ function ChatFlowsSidebar({
                   </div>
                   <p>{flow.description}</p>
                   <span className="flow-parameters">{flow.parameters}</span>
+                  <button
+                    className="flow-form-open"
+                    onClick={() => setSelectedFlow(flow)}
+                    type="button"
+                  >
+                    Open form <span aria-hidden="true">→</span>
+                  </button>
                 </article>
               ))}
             </section>
@@ -120,9 +135,228 @@ function ChatFlowsSidebar({
         </div>
       )}
       <footer className="flow-sidebar-footer">
-        State-changing flows are prepared as drafts and run only after you confirm.
+        State-changing flows require explicit confirmation before they run.
       </footer>
+      {selectedFlow && createPortal(
+        <div
+          className="workflow-dialog-backdrop"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setSelectedFlow(null);
+          }}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSelectedFlow(null);
+          }}
+          tabIndex={-1}
+        >
+          <section
+            aria-labelledby="catalog-workflow-title"
+            aria-modal="true"
+            className="workflow-dialog"
+            role="dialog"
+          >
+            <header className="workflow-dialog-heading">
+              <div>
+                <p className="dashboard-eyebrow">FLOW CATALOG</p>
+                <h2 id="catalog-workflow-title">{selectedFlow.method}</h2>
+              </div>
+              <button
+                aria-label="Close workflow form"
+                autoFocus
+                className="icon-button"
+                onClick={() => setSelectedFlow(null)}
+                type="button"
+              >
+                ×
+              </button>
+            </header>
+            <p className="dashboard-workflow-description">{selectedFlow.description}</p>
+            <WorkflowForm flow={selectedFlow} />
+          </section>
+        </div>,
+        document.body,
+      )}
     </aside>
+  );
+}
+
+function WorkflowForm({
+  flow,
+}: {
+  flow: ChatFlow;
+}) {
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(flow.fields.map((field) => [
+      field.name,
+      field.type === "json" ? "[]" : "",
+    ])));
+  const [error, setError] = useState("");
+  const [result, setResult] = useState("");
+  const [isRunning, setIsRunning] = useState(false);
+  const [pendingParameters, setPendingParameters] = useState<Record<string, unknown> | null>(null);
+
+  function updateField(field: WorkflowParameter, value: string) {
+    setValues((current) => ({ ...current, [field.name]: value }));
+    setPendingParameters(null);
+    setError("");
+    setResult("");
+  }
+
+  function buildParameters(): Record<string, unknown> {
+    const parameters: Record<string, unknown> = {};
+    for (const field of flow.fields) {
+      const value = values[field.name]?.trim() ?? "";
+      if (!value) {
+        if (field.required) throw new Error(`${field.name} is required.`);
+        continue;
+      }
+
+      if (field.type === "uuid" &&
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+        throw new Error(`${field.name} must be a valid UUID.`);
+      }
+      if (field.type === "number" || field.type === "integer") {
+        const number = Number(value);
+        if (!Number.isFinite(number) || (field.type === "integer" && !Number.isInteger(number))) {
+          throw new Error(`${field.name} must be a valid ${field.type}.`);
+        }
+        parameters[field.name] = number;
+      } else if (field.type === "json" || field.type === "json-string") {
+        try {
+          JSON.parse(value);
+        } catch {
+          throw new Error(`${field.name} must contain valid JSON.`);
+        }
+        parameters[field.name] = field.type === "json-string" ? value : JSON.parse(value) as unknown;
+      } else if (field.type === "datetime") {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) throw new Error(`${field.name} must be a valid date and time.`);
+        parameters[field.name] = date.toISOString();
+      } else if (field.type === "select" && (value === "true" || value === "false")) {
+        parameters[field.name] = value === "true";
+      } else {
+        parameters[field.name] = value;
+      }
+    }
+    return parameters;
+  }
+
+  async function execute(parameters: Record<string, unknown>) {
+    setError("");
+    setResult("");
+    setIsRunning(true);
+    try {
+      const response = await callBrokerageFlow(flow.method, parameters);
+      setResult(JSON.stringify(response.result, null, 2) ?? "null");
+      setPendingParameters(null);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "The workflow could not be completed.");
+    } finally {
+      setIsRunning(false);
+    }
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    try {
+      const parameters = buildParameters();
+      if (flow.isReadOnly) void execute(parameters);
+      else setPendingParameters(parameters);
+    } catch (validationError) {
+      setError(validationError instanceof Error ? validationError.message : "Workflow parameters are invalid.");
+    }
+  }
+
+  function renderField(field: WorkflowParameter) {
+    const label = field.name.replace(/([A-Z])/g, " $1");
+    const commonProps = {
+      id: `workflow-${flow.method}-${field.name}`,
+      onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+        updateField(field, event.target.value),
+      required: field.required,
+      value: values[field.name] ?? "",
+    };
+
+    return (
+      <label className="workflow-field" htmlFor={commonProps.id} key={field.name}>
+        <span>{label}{field.required ? " *" : " (optional)"}</span>
+        {field.type === "select" || field.type === "boolean" ? (
+          <select {...commonProps}>
+            <option value="">Select {label.toLowerCase()}</option>
+            {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+        ) : field.type === "json" || field.type === "json-string" ? (
+          <textarea
+            {...commonProps}
+            autoCapitalize="off"
+            autoCorrect="off"
+            placeholder={field.type === "json"
+              ? flow.method === "accounts.createJournal"
+                ? '[{"type":"Debit","amount":100,"currency":"USD"}]'
+                : flow.method === "workflow.start"
+                  ? '[{"taskType":"Review","assignedRole":"BrokerageOperations"}]'
+                  : "[]"
+              : "{\"key\":\"value\"}"}
+            spellCheck={false}
+          />
+        ) : (
+          <input
+            {...commonProps}
+            inputMode={field.type === "number" || field.type === "integer" ? "decimal" : undefined}
+            max={field.type === "integer" ? Number.MAX_SAFE_INTEGER : undefined}
+            min={field.type === "integer" ? 0 : undefined}
+            placeholder={field.type === "uuid" ? "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" : undefined}
+            step={field.type === "integer" ? 1 : field.type === "number" ? "any" : undefined}
+            type={field.type === "email" ? "email"
+              : field.type === "number" || field.type === "integer" ? "number"
+                : field.type === "date" ? "date"
+                  : field.type === "datetime" ? "datetime-local" : "text"}
+          />
+        )}
+      </label>
+    );
+  }
+
+  return (
+    <form className="workflow-form" onSubmit={(event) => submit(event)}>
+      {flow.fields.length > 0 ? (
+        <div className="workflow-fields">{flow.fields.map(renderField)}</div>
+      ) : (
+        <p className="workflow-no-fields">This workflow does not require parameters.</p>
+      )}
+      {error && <p className="dashboard-message-error" role="alert">{error}</p>}
+      {result && (
+        <div className="dashboard-result">
+          <span>RESULT</span><pre>{result}</pre>
+        </div>
+      )}
+      {pendingParameters ? (
+        <div className="workflow-confirmation" role="alert">
+          <p>Run <code>{flow.method}</code>? This operation can change brokerage data.</p>
+          <div>
+            <button
+              className="dashboard-run-button"
+              disabled={isRunning}
+              onClick={() => void execute(pendingParameters)}
+              type="button"
+            >
+              {isRunning ? "Running…" : "Confirm and run"}
+            </button>
+            <button
+              className="workflow-cancel-button"
+              onClick={() => setPendingParameters(null)}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button className="dashboard-run-button" disabled={isRunning} type="submit">
+          {isRunning ? "Running…" : flow.isReadOnly ? "Run workflow" : "Review operation"}
+        </button>
+      )}
+    </form>
   );
 }
 
@@ -318,9 +552,196 @@ function ChatSettingsView() {
   );
 }
 
+function DashboardView({
+  identitySession,
+  flows,
+  flowsError,
+  onSignOut,
+}: {
+  identitySession: IdentityAuthenticationResponse;
+  flows: ChatFlow[];
+  flowsError: string;
+  onSignOut: () => void;
+}) {
+  const [selectedModule, setSelectedModule] = useState<string | null>(null);
+  const [selectedFlow, setSelectedFlow] = useState<ChatFlow | null>(null);
+  const modules = [...new Set(flows.map((flow) => flow.method.split(".")[0]))].sort();
+  const moduleFlows = selectedModule
+    ? flows.filter((flow) => flow.method.startsWith(`${selectedModule}.`))
+    : [];
+  const readOnlyFlowCount = flows.filter((flow) => flow.isReadOnly).length;
+
+  function chooseFlow(flow: ChatFlow) {
+    setSelectedFlow(flow);
+  }
+
+  return (
+    <div className="dashboard-shell">
+      <header className="dashboard-topbar">
+        <a className="brand" href="/" aria-label="Brokerage Dashboard home">
+          <span className="brand-mark" aria-hidden="true">B</span>
+          <span>brokerage<span className="brand-dot">.</span></span>
+        </a>
+        <div className="dashboard-topbar-actions">
+          <span className="dashboard-user">{identitySession.user.email}</span>
+          <a className="dashboard-chat-link" href="/chat">Open Chat <span aria-hidden="true">↗</span></a>
+          <button className="profile-menu" onClick={onSignOut} type="button">Sign out</button>
+        </div>
+      </header>
+
+      <div className="dashboard-layout">
+        <aside className="dashboard-nav" aria-label="Dashboard navigation">
+          <button
+            className={`dashboard-nav-item ${selectedModule === null ? "dashboard-nav-item-active" : ""}`}
+            onClick={() => {
+              setSelectedModule(null);
+              setSelectedFlow(null);
+            }}
+            type="button"
+          >
+            <span aria-hidden="true">⌂</span> Overview
+          </button>
+          <p className="dashboard-nav-label">MODULES</p>
+          {modules.map((module) => (
+            <button
+              className={`dashboard-nav-item ${selectedModule === module ? "dashboard-nav-item-active" : ""}`}
+              key={module}
+              onClick={() => {
+                setSelectedModule(module);
+                setSelectedFlow(null);
+              }}
+              type="button"
+            >
+              <span aria-hidden="true">◇</span>
+              <span>{module.replace(/([A-Z])/g, " $1")}</span>
+              <span className="dashboard-nav-count">
+                {flows.filter((flow) => flow.method.startsWith(`${module}.`)).length}
+              </span>
+            </button>
+          ))}
+          {flowsError && <p className="dashboard-nav-error" role="alert">{flowsError}</p>}
+        </aside>
+
+        <main className="dashboard-main">
+          {selectedModule === null ? (
+            <section className="dashboard-overview">
+              <p className="dashboard-eyebrow">BROKERAGE WORKSPACE</p>
+              <h1>Good to see you.</h1>
+              <p className="dashboard-intro">
+                Your module workflows are available here. Select a module to view and run its operations.
+              </p>
+              <div className="dashboard-stats">
+                <article className="dashboard-stat">
+                  <span>MODULES</span><strong>{modules.length}</strong><small>Available areas</small>
+                </article>
+                <article className="dashboard-stat">
+                  <span>WORKFLOWS</span><strong>{flows.length}</strong><small>Registered operations</small>
+                </article>
+                <article className="dashboard-stat">
+                  <span>READ ONLY</span><strong>{readOnlyFlowCount}</strong><small>Safe lookup operations</small>
+                </article>
+              </div>
+              <div className="dashboard-section-heading">
+                <div><p className="dashboard-eyebrow">WORKSPACE</p><h2>Modules</h2></div>
+                <span>{modules.length} available</span>
+              </div>
+              {flowsError ? (
+                <p className="dashboard-message dashboard-message-error" role="alert">{flowsError}</p>
+              ) : flows.length === 0 ? (
+                <p className="dashboard-message" role="status">Loading module workflows…</p>
+              ) : (
+                <div className="dashboard-module-grid">
+                  {modules.map((module) => {
+                    const count = flows.filter((flow) => flow.method.startsWith(`${module}.`)).length;
+                    return (
+                      <button
+                        className="dashboard-module-card"
+                        key={module}
+                        onClick={() => setSelectedModule(module)}
+                        type="button"
+                      >
+                        <span className="dashboard-module-icon" aria-hidden="true">◇</span>
+                        <span className="dashboard-module-name">{module.replace(/([A-Z])/g, " $1")}</span>
+                        <span className="dashboard-module-count">{count} workflows <i aria-hidden="true">→</i></span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          ) : (
+            <section className="dashboard-module-view">
+              <button
+                className="dashboard-back-link"
+                onClick={() => {
+                  setSelectedModule(null);
+                  setSelectedFlow(null);
+                }}
+                type="button"
+              >
+                ← Overview
+              </button>
+              <p className="dashboard-eyebrow">MODULE WORKFLOWS</p>
+              <h1>{selectedModule.replace(/([A-Z])/g, " $1")}</h1>
+              <p className="dashboard-intro">Select an operation to view its parameters and execute it.</p>
+              {flowsError ? (
+                <p className="dashboard-message dashboard-message-error" role="alert">{flowsError}</p>
+              ) : (
+                <div className="dashboard-workflow-layout">
+                  <div className="dashboard-workflow-list" aria-label={`${selectedModule} workflows`}>
+                    {moduleFlows.map((flow) => (
+                      <button
+                        aria-pressed={selectedFlow?.method === flow.method}
+                        className={`dashboard-workflow-item ${selectedFlow?.method === flow.method ? "dashboard-workflow-item-active" : ""}`}
+                        key={flow.method}
+                        onClick={() => chooseFlow(flow)}
+                        type="button"
+                      >
+                        <span className="dashboard-workflow-item-title">{flow.method}</span>
+                        <span className={`dashboard-workflow-kind ${flow.isReadOnly ? "dashboard-workflow-read" : "dashboard-workflow-write"}`}>
+                          {flow.isReadOnly ? "READ" : "WRITE"}
+                        </span>
+                        <span className="dashboard-workflow-item-description">{flow.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {selectedFlow ? (
+                    <article className="dashboard-workflow-detail">
+                      <div className="dashboard-workflow-detail-heading">
+                        <div>
+                          <p className="dashboard-eyebrow">WORKFLOW</p>
+                          <h2>{selectedFlow.method}</h2>
+                        </div>
+                        <span className={`dashboard-workflow-kind ${selectedFlow.isReadOnly ? "dashboard-workflow-read" : "dashboard-workflow-write"}`}>
+                          {selectedFlow.isReadOnly ? "READ ONLY" : "CHANGES DATA"}
+                        </span>
+                      </div>
+                      <p className="dashboard-workflow-description">{selectedFlow.description}                      </p>
+                      <p className="dashboard-parameter-hint">
+                        Expected parameters: <code>{selectedFlow.parameters}</code>
+                      </p>
+                      <WorkflowForm flow={selectedFlow} />
+                    </article>
+                  ) : (
+                    <div className="dashboard-workflow-empty">
+                      <span aria-hidden="true">⌁</span>
+                      <p>Select a workflow to get started.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [identitySession, setIdentitySession] = useState<IdentityAuthenticationResponse | null>(null);
   const [logoutNotice, setLogoutNotice] = useState("");
+  const [currentPath, setCurrentPath] = useState(window.location.pathname);
   const [activeView, setActiveView] = useState<"assistant" | "settings">("assistant");
   const [flows, setFlows] = useState<ChatFlow[]>([]);
   const [flowsError, setFlowsError] = useState("");
@@ -337,6 +758,12 @@ function App() {
   useEffect(() => subscribeIdentitySession(setIdentitySession), []);
 
   useEffect(() => {
+    const updatePath = () => setCurrentPath(window.location.pathname);
+    window.addEventListener("popstate", updatePath);
+    return () => window.removeEventListener("popstate", updatePath);
+  }, []);
+
+  useEffect(() => {
     if (identitySession) setLogoutNotice("");
   }, [identitySession?.user.userId]);
 
@@ -349,7 +776,7 @@ function App() {
 
     let active = true;
     setFlowsError("");
-    void getChatFlows()
+    void getBrokerageFlows()
       .then((catalog) => {
         if (active) setFlows(catalog);
       })
@@ -364,6 +791,20 @@ function App() {
   }, [messages, isSending]);
 
   if (!identitySession) return <IdentityScreen notice={logoutNotice} />;
+  if (currentPath !== "/chat" && !currentPath.startsWith("/chat/")) {
+    return (
+      <DashboardView
+        flows={flows}
+        flowsError={flowsError}
+        identitySession={identitySession}
+        onSignOut={() => {
+          void logoutIdentity().catch((error: unknown) => setLogoutNotice(
+            error instanceof Error ? error.message : "Sign out failed.",
+          ));
+        }}
+      />
+    );
+  }
 
   async function submitMessage(text: string) {
     const trimmed = text.trim();
@@ -517,14 +958,14 @@ function App() {
 
         <div className="sidebar-section">
           <p className="section-label">WORKSPACE</p>
-          <button
-            className={`nav-item ${activeView === "assistant" ? "nav-item-active" : ""}`}
-            onClick={() => setActiveView("assistant")}
-            type="button"
-          >
+          <a className="nav-item" href="/">
+            <span className="nav-icon nav-icon-muted" aria-hidden="true">⌂</span>
+            <span>Dashboard</span>
+          </a>
+          <a className={`nav-item ${activeView === "assistant" ? "nav-item-active" : ""}`} href="/chat">
             <span className="nav-icon" aria-hidden="true">›_</span>
             <span>Assistant</span>
-          </button>
+          </a>
           {identitySession.user.roles.includes("Administrator") && (
             <button
               className={`nav-item ${activeView === "settings" ? "nav-item-active" : ""}`}

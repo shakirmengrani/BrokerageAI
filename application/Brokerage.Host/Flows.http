@@ -1,0 +1,20 @@
+@baseUrl = http://localhost:8080
+@accessToken = replace-with-a-valid-access-token
+
+### List registered module workflows without Chat provider configuration
+GET {{baseUrl}}/api/rpc/flows
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+### Execute a read-only workflow
+POST {{baseUrl}}/rpc
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": "dashboard-example",
+  "method": "admin.operationalControls",
+  "params": {}
+}
