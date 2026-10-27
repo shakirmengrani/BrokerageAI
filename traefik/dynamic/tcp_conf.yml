@@ -1,0 +1,29 @@
+tcp:
+  routers:
+    # Without TLS on the router, only the catch-all HostSNI(`*`) is allowed.
+    # One backend per entrypoint, which is fine since there is a single PgBouncer.
+    pg:
+      rule: HostSNI(`*`)
+      entryPoints: [postgres]
+      service: pg
+      middlewares: []
+ 
+  middlewares:
+    pg-allow:
+      ipAllowList:
+        sourceRange:
+          - 203.0.113.0/24
+          - 198.51.100.7/32
+ 
+  services:
+    pg:
+      loadBalancer:
+        servers:
+          - address: pgbouncer:6432
+ 
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      sniStrict: true
+ 

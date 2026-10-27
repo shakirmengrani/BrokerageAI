@@ -1,0 +1,37 @@
+http:
+  middlewares:
+    strip-slash:
+      stripPrefixRegex:
+        regex:
+          - "/+$"
+    security-headers:
+      headers:
+        frameDeny: true
+        sslRedirect: false
+        browserXssFilter: true
+        contentTypeNosniff: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+
+  routers:
+    pgadmin:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/pgadmin`)"
+      service: pgadmin-service
+      
+    app:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: dotnet-app-service
+
+  services:
+    pgadmin-service:
+      loadBalancer:
+        servers:
+          - url: "http://pgadmin:80"
+    dotnet-app-service:
+      loadBalancer:
+        servers:
+          - url: "http://dotnet-app:8080"

@@ -1,0 +1,70 @@
+services:
+  traefik:
+    image: traefik:v3.6
+    platform: linux/amd64
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./traefik:/etc/traefik
+    networks:
+      - backend-net
+
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d appdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend-net
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    env_file:
+      - .env
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend-net
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    env_file:
+      - .env
+    volumes:
+      - ./pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - backend-net
+
+  dotnet-app:
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    env_file:
+      - .env
+    command: "sleep infinity"
+    volumes:
+      - ./application:/app
+    working_dir: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+    networks:
+      - backend-net
+
+networks:
+  backend-net:
+    driver: bridge

@@ -1,0 +1,30 @@
+@baseUrl = http://localhost:5000
+@accessToken = replace-with-a-valid-access-token
+
+### Chat completion (requires authenticated user and Chat:Endpoint/Chat:Model configuration)
+POST {{baseUrl}}/api/chat
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "message": "What can you help me with?",
+  "history": []
+}
+
+### Validation error: blank message
+POST {{baseUrl}}/api/chat
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "message": " ",
+  "history": []
+}
+
+### Confirm a pending action returned by POST /api/chat
+POST {{baseUrl}}/api/chat/actions/{{actionId}}/confirm
+Authorization: ******
+
+### Discard a pending action
+DELETE {{baseUrl}}/api/chat/actions/{{actionId}}
+Authorization: ******

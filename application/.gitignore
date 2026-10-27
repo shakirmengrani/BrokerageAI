@@ -1,0 +1,40 @@
+# .NET build output
+**/bin/
+**/obj/
+**/TestResults/
+**/artifacts/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Local configuration and secrets
+**/.env
+**/.env.*
+!**/.env.example
+**/appsettings.Development.json
+**/appsettings.Local.json
+secrets.json
+
+# Node.js and frontend build output
+**/node_modules/
+**/dist/
+**/coverage/
+**/*.tsbuildinfo
+/Brokerage.Host/wwwroot/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/tasks.json

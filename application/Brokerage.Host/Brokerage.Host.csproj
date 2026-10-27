@@ -1,0 +1,37 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>ac32c231-a689-4aac-96bb-cbd5fb61c107</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Brokerage.Common/Brokerage.Common.csproj" />
+    <ProjectReference Include="../Brokerage.Identity/Brokerage.Identity.csproj" />
+    <ProjectReference Include="../Brokerage.Clients/Brokerage.Clients.csproj" />
+    <ProjectReference Include="../Brokerage.Accounts/Brokerage.Accounts.csproj" />
+    <ProjectReference Include="../Brokerage.MarketData/Brokerage.MarketData.csproj" />
+    <ProjectReference Include="../Brokerage.Orders/Brokerage.Orders.csproj" />
+    <ProjectReference Include="../Brokerage.Portfolios/Brokerage.Portfolios.csproj" />
+    <ProjectReference Include="../Brokerage.Settlement/Brokerage.Settlement.csproj" />
+    <ProjectReference Include="../Brokerage.Risk/Brokerage.Risk.csproj" />
+    <ProjectReference Include="../Brokerage.Billing/Brokerage.Billing.csproj" />
+    <ProjectReference Include="../Brokerage.Reporting/Brokerage.Reporting.csproj" />
+    <ProjectReference Include="../Brokerage.Notifications/Brokerage.Notifications.csproj" />
+    <ProjectReference Include="../Brokerage.Payments/Brokerage.Payments.csproj" />
+    <ProjectReference Include="../Brokerage.Reconciliation/Brokerage.Reconciliation.csproj" />
+    <ProjectReference Include="../Brokerage.Documents/Brokerage.Documents.csproj" />
+    <ProjectReference Include="../Brokerage.Workflow/Brokerage.Workflow.csproj" />
+    <ProjectReference Include="../Brokerage.ReferenceData/Brokerage.ReferenceData.csproj" />
+    <ProjectReference Include="../Brokerage.Tax/Brokerage.Tax.csproj" />
+    <ProjectReference Include="../Brokerage.CorporateActions/Brokerage.CorporateActions.csproj" />
+    <ProjectReference Include="../Brokerage.Integrations/Brokerage.Integrations.csproj" />
+    <ProjectReference Include="../Brokerage.Admin/Brokerage.Admin.csproj" />
+    <ProjectReference Include="..\Brokerage.Mcp\Brokerage.Mcp.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
+    <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
+  </ItemGroup>
+</Project>

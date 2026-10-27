@@ -1,0 +1,7 @@
+.*env*
+!.env.example
+*.zip
+application_old
+pgadmin_data
+postgres_data
+pgbouncer/userlist.txt

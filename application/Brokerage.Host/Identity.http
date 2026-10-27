@@ -1,0 +1,41 @@
+@baseUrl = http://localhost:8080
+@accessToken = replace-with-access-token
+@refreshToken = replace-with-refresh-token
+
+### Register (email/password; returns bearer and refresh tokens)
+POST {{baseUrl}}/api/identity/register
+Content-Type: application/json
+
+{
+  "email": "trader@example.com",
+  "password": "replace-with-a-long-password"
+}
+
+### Sign in
+POST {{baseUrl}}/api/identity/login
+Content-Type: application/json
+
+{
+  "email": "trader@example.com",
+  "password": "replace-with-a-long-password"
+}
+
+### Rotate refresh token
+POST {{baseUrl}}/api/identity/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+### Get the current user's profile
+GET {{baseUrl}}/api/identity/me
+Authorization: Bearer {{accessToken}}
+
+### Revoke refresh token (logout)
+POST {{baseUrl}}/api/identity/logout
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
